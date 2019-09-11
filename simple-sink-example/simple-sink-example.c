@@ -95,7 +95,7 @@ static bt_graph *create_graph_with_source(const bt_port_output **out_port)
 	/*
 	 * Create the initialization parameter for the `src.text.dmesg`
 	 * component class. In this case, we want to read from stdin; no
-	 * paramter is needed; we pass NULL;
+	 * parameters are needed; we pass NULL;
 	 */
 	src_params = NULL;
 
