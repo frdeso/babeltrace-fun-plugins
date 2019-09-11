@@ -27,13 +27,18 @@
 
 #include <babeltrace2/babeltrace.h>
 
+struct simple_data {
+	bt_message_array_const msgs;
+	uint64_t msg_count;
+};
+
 static bt_graph_simple_sink_component_init_func_status
 simple_init_func(bt_self_component_port_input_message_iterator *iterator,
 		 void *data)
 {
-	uint64_t *total_number_event = data;
+	struct simple_data *simple_data = data;
 
-	*total_number_event = 0;
+	simple_data->msg_count = 0;
 	return BT_GRAPH_SIMPLE_SINK_COMPONENT_INIT_FUNC_STATUS_OK;
 }
 
@@ -42,9 +47,9 @@ simple_consume_func(bt_self_component_port_input_message_iterator *iterator,
 		    void *data)
 {
 	bt_message_iterator_next_status upstream_iterator_ret_status;
-	uint64_t *total_number_event = data;
+	struct simple_data *simple_data = data;
 	bt_message_array_const msgs;
-	uint64_t i, count;
+	uint64_t count;
 
 	upstream_iterator_ret_status =
 		bt_self_component_port_input_message_iterator_next(
@@ -56,53 +61,8 @@ simple_consume_func(bt_self_component_port_input_message_iterator *iterator,
 	}
 
 	printf("(Received %" PRIu64 " messages.)\n", count);
-	for (i = 0; i < count; i++) {
-		const bt_message *msg = msgs[i];
-
-		switch (bt_message_get_type(msg)) {
-		case BT_MESSAGE_TYPE_EVENT: {
-			bt_clock_snapshot_get_ns_from_origin_status status;
-			const bt_clock_snapshot *cs;
-			int64_t ts;
-
-			cs = bt_message_event_borrow_default_clock_snapshot_const(
-				msg);
-			status = bt_clock_snapshot_get_ns_from_origin(cs, &ts);
-			assert(status ==
-			       BT_CLOCK_SNAPSHOT_GET_NS_FROM_ORIGIN_STATUS_OK);
-
-			printf("Event message with timestamp=%" PRIu64 " ns\n",
-			       ts);
-
-			*total_number_event += 1;
-			break;
-		}
-		case BT_MESSAGE_TYPE_STREAM_BEGINNING:
-			printf("[Stream beginning message]\n");
-			break;
-		case BT_MESSAGE_TYPE_STREAM_END:
-			printf("[Stream end message]\n");
-			break;
-		case BT_MESSAGE_TYPE_PACKET_BEGINNING:
-			printf("[Packet beginning message]\n");
-			break;
-		case BT_MESSAGE_TYPE_PACKET_END:
-			printf("[Packet end message]\n");
-			break;
-		case BT_MESSAGE_TYPE_DISCARDED_EVENTS:
-			printf("[Discarded events message]\n");
-			break;
-		case BT_MESSAGE_TYPE_DISCARDED_PACKETS:
-			printf("[Discarded packets message]\n");
-			break;
-		case BT_MESSAGE_TYPE_MESSAGE_ITERATOR_INACTIVITY:
-			printf("[Message iterator inactivity message]\n");
-			break;
-		default:
-			printf("[Other message type]\n");
-		}
-		bt_message_put_ref(msg);
-	}
+	simple_data->msg_count = count;
+	simple_data->msgs = msgs;
 
 end:
 	return upstream_iterator_ret_status;
@@ -172,9 +132,13 @@ int main(void)
 	const bt_port_output *src_out_port = NULL;
 	const bt_component_sink *sink_comp = NULL;
 	const bt_port_input *sink_in_port;
-	bt_graph_run_status run_status;
-	uint64_t total_number_event;
+	uint64_t i, total_number_event;
 	bt_graph *graph;
+
+	struct simple_data simple_data = {
+		.msgs = NULL,
+		.msg_count = 0,
+	};
 
 	graph = create_graph_with_source(&src_out_port);
 	assert(graph);
@@ -185,7 +149,7 @@ int main(void)
 	 */
 	add_comp_status = bt_graph_add_simple_sink_component(
 		graph, "sink", simple_init_func, simple_consume_func, NULL,
-		&total_number_event, &sink_comp);
+		&simple_data, &sink_comp);
 	assert(add_comp_status == BT_GRAPH_ADD_COMPONENT_STATUS_OK);
 	assert(sink_comp);
 
@@ -201,9 +165,64 @@ int main(void)
 		bt_graph_connect_ports(graph, src_out_port, sink_in_port, NULL);
 	assert(connect_status == BT_GRAPH_CONNECT_PORTS_STATUS_OK);
 
+	total_number_event = 0;
+
 	/* Run the graph until completion. */
-	run_status = bt_graph_run(graph);
-	assert(run_status == BT_GRAPH_RUN_STATUS_END);
+	while (bt_graph_run_once(graph) == BT_GRAPH_RUN_ONCE_STATUS_OK) {
+		/*
+		 * Everytime run_once() is called our simple sink gets a new
+		 * batch of messages and updates the simple_data structure.
+		 */
+		for (i = 0; i < simple_data.msg_count; i++) {
+			const bt_message *msg = simple_data.msgs[i];
+
+			switch (bt_message_get_type(msg)) {
+			case BT_MESSAGE_TYPE_EVENT: {
+				bt_clock_snapshot_get_ns_from_origin_status
+					status;
+				const bt_clock_snapshot *cs;
+				int64_t ts;
+
+				cs = bt_message_event_borrow_default_clock_snapshot_const(
+					msg);
+				status = bt_clock_snapshot_get_ns_from_origin(
+					cs, &ts);
+				assert(status ==
+				       BT_CLOCK_SNAPSHOT_GET_NS_FROM_ORIGIN_STATUS_OK);
+
+				printf("Event message with timestamp=%" PRIu64
+				       " ns\n",
+				       ts);
+				total_number_event++;
+				break;
+			}
+			case BT_MESSAGE_TYPE_STREAM_BEGINNING:
+				printf("[Stream beginning message]\n");
+				break;
+			case BT_MESSAGE_TYPE_STREAM_END:
+				printf("[Stream end message]\n");
+				break;
+			case BT_MESSAGE_TYPE_PACKET_BEGINNING:
+				printf("[Packet beginning message]\n");
+				break;
+			case BT_MESSAGE_TYPE_PACKET_END:
+				printf("[Packet end message]\n");
+				break;
+			case BT_MESSAGE_TYPE_DISCARDED_EVENTS:
+				printf("[Discarded events message]\n");
+				break;
+			case BT_MESSAGE_TYPE_DISCARDED_PACKETS:
+				printf("[Discarded packets message]\n");
+				break;
+			case BT_MESSAGE_TYPE_MESSAGE_ITERATOR_INACTIVITY:
+				printf("[Message iterator inactivity message]\n");
+				break;
+			default:
+				printf("[Other message type]\n");
+			}
+			bt_message_put_ref(msg);
+		}
+	}
 
 	printf("Total number of events analyzed: %" PRIu64 "\n",
 	       total_number_event);

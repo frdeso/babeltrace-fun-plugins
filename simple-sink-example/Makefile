@@ -1,4 +1,4 @@
-CFLAGS = -g3 -O0 -Werror -Wall
+CFLAGS = -O3 -Werror -Wall
 CC ?= gcc
 LDFLAGS=-lbabeltrace2
 
@@ -14,4 +14,3 @@ clean:
 
 run: simple-sink-example
 	dmesg | ./simple-sink-example
-
